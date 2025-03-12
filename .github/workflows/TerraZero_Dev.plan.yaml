@@ -1,0 +1,60 @@
+name: TerraZero_Dev Terraform Plan
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'terraform/TerraZero_Dev/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Git to use the GITHUB_TOKEN
+        run: |
+          git config --global url."https://oauth2:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Configure AWS credentials using OIDC
+        id: configure-aws-creds
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_MANAGEMENT_ACCOUNT_ID }}:role/intraverse-ops-github-actions
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.4.6
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform/TerraZero_Dev
+
+      - name: Terraform Plan
+        id: tf_plan
+        run: terraform plan -no-color > plan.txt
+        working-directory: terraform/TerraZero_Dev
+
+      - name: Post plan as PR comment
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/TerraZero_Dev/plan.txt', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Terraform Plan\n\`\`\`\n${plan}\n\`\`\``
+            })

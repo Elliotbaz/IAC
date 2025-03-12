@@ -1,0 +1,40 @@
+FROM dcv-base AS dcv-server
+
+ARG PORT=8443
+ENV PORT=$PORT
+
+# init.sh and log file
+RUN mkdir -p /var/lib/dcv/init
+RUN touch /var/lib/dcv/init.log
+COPY dcv-init.sh /var/lib/dcv/
+RUN cat /var/lib/dcv/dcv-init.sh > /var/lib/dcv/init.sh
+RUN chmod +x /var/lib/dcv/init.sh
+RUN chmod 755 /var/lib/dcv/init
+RUN chown -R dcv:dcv /var/lib/dcv/init
+
+# Copy necessary files
+COPY dcvserver.service /usr/lib/systemd/system/dcvserver.service
+COPY dcv-start.sh /usr/local/bin/
+COPY dcv-run.sh /usr/local/bin/
+COPY dcv.conf /etc/dcv/
+COPY dcv-launch-game.sh /usr/local/bin/
+COPY game-build/* /var/lib/dcv/Desktop/
+
+
+# Set owner and group to dcv for the scripts in /usr/local/bin
+RUN chown -R dcv:dcv /usr/local/bin/dcv-run.sh \
+    /usr/local/bin/dcv-start.sh \
+    /usr/local/bin/dcv-launch-game.sh \
+    /var/lib/dcv/Desktop/IntraverseClient.x86_64
+
+# Set permissions
+RUN chmod +x /usr/local/bin/dcv-run.sh \
+    /usr/local/bin/dcv-start.sh \
+    /usr/local/bin/dcv-launch-game.sh \
+    /var/lib/dcv/Desktop/IntraverseClient.x86_64
+
+RUN sed -i "s/web-port=8443/web-port=$PORT/" /etc/dcv/dcv.conf
+
+EXPOSE $PORT
+
+CMD ["/usr/local/bin/dcv-run.sh"]

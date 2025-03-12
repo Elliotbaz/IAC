@@ -1,0 +1,60 @@
+name: Update DCV Server Host Plan
+
+# BRANCH_NAME=$(git branch --show-current)
+# gh workflow run dcv-server-dev-plan.yaml --ref $BRANCH_NAME -f game_version="1_3_10" -f ami_id="ami-0fdac5eaba2f8b4dc"
+
+on:
+    workflow_dispatch:
+        inputs:
+            ami_id:
+                type: string
+                required: true
+                default: "ami-0d00d12af98ec6a9f"
+            game_version:
+                type: string
+                required: true
+                default: "1_3_9"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Git to use the GITHUB_TOKEN
+        run: |
+          git config --global url."https://oauth2:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Configure AWS credentials using OIDC
+        id: configure-aws-creds
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_MANAGEMENT_ACCOUNT_ID }}:role/intraverse-ops-github-actions
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.4.6
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform/TerraZero_Dev/dcv-server-host
+
+      - name: Terraform Plan
+        id: tf_plan
+        run: |
+          echo "Terraform Plan"
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          terraform plan -var "ami_id=${{ inputs.ami_id }}" -var "game_version=${{ inputs.game_version }}" -var "ami_hash=${COMMIT_HASH}"
+        working-directory: terraform/TerraZero_Dev/dcv-server-host
+
+

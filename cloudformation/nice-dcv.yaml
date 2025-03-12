@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template to launch an EC2 instance with Docker and NICE DCV installed in a Docker container on Ubuntu 22.04 with GPU support
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Default: "unity-elliot-test"
+    Description: Name of the S3 bucket containing the setup files
+
+Resources:
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource: 
+                  - !Sub arn:aws:s3:::${S3BucketName}
+                  - !Sub arn:aws:s3:::${S3BucketName}/*
+        - PolicyName: dcvLicensing
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub "arn:aws:s3:::dcv-license.${AWS::Region}/*"
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: g4dn.xlarge
+      KeyName: elliot_test_intraverse
+      ImageId: ami-0f7c4a792e3fb63c8
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      SubnetId: subnet-0797f66d802250dcb
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 100
+            VolumeType: gp3
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          exec > >(tee 5|logger -t user-data -s 2>/dev/console) 2>&1
+
+          # Update and install necessary packages
+          apt update -y
+          apt upgrade -y
+
+          # Install Docker using the official Docker script
+          curl -fsSL https://get.docker.com -o get-docker.sh
+          sh get-docker.sh
+          systemctl start docker
+          systemctl enable docker
+          usermod -aG docker ubuntu
+
+          # Install other necessary packages
+          apt install -y awscli unzip
+
+          # Create a directory for the Dockerfile and scripts
+          mkdir -p /home/ubuntu/docker-setup
+          cd /home/ubuntu/docker-setup
+
+          # Download and unzip the setup files from S3
+          if aws s3 cp s3://${S3BucketName}/dcv_setup.zip . ; then
+            echo "Successfully downloaded dcv_setup.zip"
+            unzip dcv_setup.zip
+            rm dcv_setup.zip
+          else
+            echo "Failed to download dcv_setup.zip from S3"
+            exit 1
+          fi
+
+          # Navigate to the dcv_setup directory
+          cd dcv_setup
+
+          # Make all scripts executable
+          chmod +x *.sh dcv-container-build.sh run_script.sh send_dcvsessionready_notification.sh startup_script.sh
+
+          # Debug: List contents and permissions
+          echo "Current directory: $(pwd)"
+          echo "Contents of current directory:"
+          ls -la
+
+          # Run the docker build script
+          ./dcv-container-build.sh 8443
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH, NICE DCV, and custom port access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8443
+          ToPort: 8443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: 8443
+          ToPort: 8443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 9000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: 8000
+          ToPort: 9000
+          CidrIp: 0.0.0.0/0
+      VpcId: vpc-029e472c307a72d22
+
+Outputs:
+  InstanceId:
+    Description: The instance ID of the EC2 instance
+    Value: !Ref MyEC2Instance
+  PublicDNS:
+    Description: Public DNS of the EC2 instance
+    Value: !GetAtt MyEC2Instance.PublicDnsName

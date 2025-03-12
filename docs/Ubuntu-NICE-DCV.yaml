@@ -1,0 +1,1711 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Ubuntu with NICE DCV ( https://github.com/aws-samples/amazon-ec2-nice-dcv-samples )
+Transform: "AWS::LanguageExtensions"
+
+Metadata:
+  License:
+    Description: >
+      Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+      SPDX-License-Identifier: MIT-0
+
+      Permission is hereby granted, free of charge, to any person obtaining a copy of this
+      software and associated documentation files (the "Software"), to deal in the Software
+      without restriction, including without limitation the rights to use, copy, modify,
+      merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+      permit persons to whom the Software is furnished to do so.
+
+      THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+      INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+      PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+      HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+      OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+      SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Ubuntu version
+        Parameters:
+          - osVersion
+      - Label:
+          default: EC2
+        Parameters:
+          - ec2Name
+          - ec2KeyPair
+          - instanceType
+      - Label:
+          default: NICE DCV
+        Parameters:
+          - sessionType
+          - teslaDriverVersion
+          - listenPort
+      - Label:
+          default: Network
+        Parameters:
+          - vpcID
+          - subnetID
+          - displayPublicIP
+          - assignStaticIP
+      - Label:
+          default: Allowed source IP and ports
+        Parameters:
+          - ingressIPv4
+          - ingressIPv6
+          - allowWebServerPorts
+      - Label:
+          default: EBS volume
+        Parameters:
+          - volumeSize
+          - volumeType
+
+Parameters:
+  osVersion:
+    Type: String
+    Description: Version and processor architecture
+    AllowedValues:
+      - Ubuntu 22.04 (arm64)
+      - Ubuntu 22.04 (x86_64)
+      - Ubuntu 20.04 (x86_64)
+      - Ubuntu 18.04 (arm64)
+      - Ubuntu 18.04 (x86_64)
+      - Ubuntu Pro 22.04 (arm64)
+      - Ubuntu Pro 22.04 (x86_64)
+      - Ubuntu Pro 20.04 (x86_64)
+      - Ubuntu Pro 18.04 (arm64)
+      - Ubuntu Pro 18.04 (x86_64)
+    Default: Ubuntu 22.04 (arm64)
+
+  ec2Name:
+    Type: String
+    Description: EC2 instance name
+    Default: Ubuntu-NICE-DCV
+  ec2KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: "Key Pair ( https://console.aws.amazon.com/ec2/#KeyPairs )"
+    AllowedPattern: ".+"
+    ConstraintDescription: Select a key pair
+  instanceType:
+    Type: String
+    Description: Instance type (x86_64 or arm64) ( https://console.aws.amazon.com/ec2/#InstanceTypes )
+    AllowedPattern: "^[a-z\\d\\.]+$"
+    ConstraintDescription: Specify valid EC2 instance type
+    Default: t4g.medium
+
+  sessionType:
+    Type: String
+    Description: Session type and GPU driver ( https://docs.aws.amazon.com/dcv/latest/adminguide/managing-sessions.html#managing-sessions-intro )
+    AllowedValues:
+      - "virtual"
+      - "console-with-Ubuntu_repo_Driver"
+      - "console-with-NVIDIA_GRID_Driver"
+      - "console-with-NVIDIA_Gaming_Driver"
+      - "console-with-NVIDIA_repo_Driver"
+      - "console-with-NVIDIA_runfile_Driver"
+      - "console-with-AMD_ROCm_repo_Driver"
+      - "console"
+      - "virtual-with-NVIDIA_repo_Driver"
+      - "virtual-with-NVIDIA_runfile_Driver"
+    Default: "virtual"
+  teslaDriverVersion:
+    Type: String
+    Description: "[*-NVIDIA_runfile_Driver] Driver version ( https://www.nvidia.com/Download/Find.aspx : Product Type = Data Center/Tesla )"
+    AllowedPattern: "^[\\d\\.]+$"
+    ConstraintDescription: Specify valid driver version
+    Default: 535.161.08
+  listenPort:
+    Type: Number
+    Description: NICE DCV server TCP/UDP port
+    MinValue: 1024
+    MaxValue: 65535
+    Default: 8443
+
+  vpcID:
+    Type: AWS::EC2::VPC::Id
+    Description: "VPC with internet connectivity ( https://console.aws.amazon.com/vpcconsole/home#vpcs: )"
+    AllowedPattern: ".+"
+    ConstraintDescription: Select a VPC
+  subnetID:
+    Type: AWS::EC2::Subnet::Id
+    Description: "Subnet with internet connectivity ( https://console.aws.amazon.com/vpcconsole/home#subnets: )"
+    AllowedPattern: ".+"
+    ConstraintDescription: Select a Subnet
+  displayPublicIP:
+    Type: String
+    Description: Display EC2 public IP in CloudFormation Outputs (select No if EC2 has no public IP)
+    AllowedValues:
+      - "Yes"
+      - "No"
+    Default: "Yes"
+  assignStaticIP:
+    Type: String
+    Description: Associate static public IPv4 address ( https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html )
+    AllowedValues:
+      - "Yes"
+      - "No"
+    Default: "Yes"
+
+  ingressIPv4:
+    Type: String
+    Description: Allowed source prefix (IPv4) ( e.g. 1.2.3.4/32, get your source IP from https://checkip.amazonaws.com )
+    AllowedPattern: "^\\d+\\.\\d+\\.\\d+\\.\\d+\\/\\d+$"
+    ConstraintDescription: Specify valid IPv4 prefix
+    Default: 0.0.0.0/0
+  ingressIPv6:
+    Type: String
+    Description: Allowed source prefix (IPv6) ( https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-instance-addressing.html#ipv6-addressing )
+    AllowedPattern: ".+"
+    ConstraintDescription: Specify valid IPv6 prefix
+    Default: ::/0
+  allowWebServerPorts:
+    Type: String
+    Description: Allow HTTP and/or HTTPS inbound
+    AllowedValues:
+      - "No"
+      - "HTTP-and-HTTPS"
+      - "HTTP"
+      - "HTTPS"
+    Default: "No"
+
+  volumeSize:
+    Type: Number
+    Description: Volume size in GiB
+    MinValue: 10
+    MaxValue: 16384
+    Default: 25
+  volumeType:
+    Type: String
+    Description: EBS volume type
+    AllowedValues:
+      - "gp3"
+      - "gp2"
+    Default: "gp3"
+
+Conditions:
+  useElasticIP: !Equals [!Ref assignStaticIP, "Yes"]
+  useUbuntu2204x86: !Equals [!Ref osVersion, "Ubuntu 22.04 (x86_64)"]
+  useUbuntu2204arm64: !Equals [!Ref osVersion, "Ubuntu 22.04 (arm64)"]
+  useUbuntu2004x86: !Equals [!Ref osVersion, "Ubuntu 20.04 (x86_64)"]
+  useUbuntu1804x86: !Equals [!Ref osVersion, "Ubuntu 18.04 (x86_64)"]
+  useUbuntu1804arm64: !Equals [!Ref osVersion, "Ubuntu 18.04 (arm64)"]
+  useUbuntuPro2204x86: !Equals [!Ref osVersion, "Ubuntu Pro 22.04 (x86_64)"]
+  useUbuntuPro2204arm64: !Equals [!Ref osVersion, "Ubuntu Pro 22.04 (arm64)"]
+  useUbuntuPro2004x86: !Equals [!Ref osVersion, "Ubuntu Pro 20.04 (x86_64)"]
+  useUbuntuPro1804x86: !Equals [!Ref osVersion, "Ubuntu Pro 18.04 (x86_64)"]
+  displayPublicIP: !Equals [!Ref displayPublicIP, "Yes"]
+  hasEIC:
+    !Not [
+      !Equals [
+        !FindInMap [
+          EICprefixMap,
+          !Ref AWS::Region,
+          "IpPrefix",
+          DefaultValue: 127.0.0.1/32,
+        ],
+        "127.0.0.1/32",
+      ],
+    ]
+  createSgEIC: !And [!Condition hasEIC, !Condition displayPublicIP]
+  createSgHTTP:
+    !Or [
+      !Equals [!Ref allowWebServerPorts, "HTTP"],
+      !Equals [!Ref allowWebServerPorts, "HTTP-and-HTTPS"],
+    ]
+  createSgHTTPS:
+    !Or [
+      !Equals [!Ref allowWebServerPorts, "HTTPS"],
+      !Equals [!Ref allowWebServerPorts, "HTTP-and-HTTPS"],
+    ]
+  hasCFprefix:
+    !Not [
+      !Equals [
+        !FindInMap [
+          CFprefixMap,
+          !Ref AWS::Region,
+          "PrefixList",
+          DefaultValue: pl-none,
+        ],
+        pl-none,
+      ],
+    ]
+  createCFsgHTTP:
+    !And [
+      !And [!Condition hasCFprefix, !Condition displayPublicIP],
+      !Condition createSgHTTP,
+    ]
+  createCFsgHTTPS:
+    !And [
+      !And [!Condition hasCFprefix, !Condition displayPublicIP],
+      !Condition createSgHTTPS,
+    ]
+
+Mappings:
+  EICprefixMap: # EC2 instance connect: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-connect-prerequisites.html#ec2-instance-connect-setup-security-group
+    af-south-1:
+      IpPrefix: 13.244.121.196/30
+    ap-east-1:
+      IpPrefix: 43.198.192.104/29
+    ap-northeast-1:
+      IpPrefix: 3.112.23.0/29
+    ap-northeast-2:
+      IpPrefix: 13.209.1.56/29
+    ap-northeast-3:
+      IpPrefix: 15.168.105.160/29
+    ap-south-1:
+      IpPrefix: 13.233.177.0/29
+    ap-south-2:
+      IpPrefix: 18.60.252.248/29
+    ap-southeast-1:
+      IpPrefix: 3.0.5.32/29
+    ap-southeast-2:
+      IpPrefix: 13.239.158.0/29
+    ap-southeast-3:
+      IpPrefix: 43.218.193.64/29
+    ap-southeast-4:
+      IpPrefix: 16.50.248.80/29
+    ca-central-1:
+      IpPrefix: 35.183.92.176/29
+    cn-north-1:
+      IpPrefix: 43.196.20.40/29
+    cn-northwest-1:
+      IpPrefix: 43.192.155.8/29
+    eu-central-1:
+      IpPrefix: 3.120.181.40/29
+    eu-central-2:
+      IpPrefix: 16.63.77.8/29
+    eu-north-1:
+      IpPrefix: 13.48.4.200/30
+    eu-south-1:
+      IpPrefix: 15.161.135.164/30
+    eu-south-2:
+      IpPrefix: 18.101.90.48/29
+    eu-west-1:
+      IpPrefix: 18.202.216.48/29
+    eu-west-2:
+      IpPrefix: 3.8.37.24/29
+    eu-west-3:
+      IpPrefix: 35.180.112.80/29
+    il-central-1:
+      IpPrefix: 51.16.183.224/29
+    me-central-1:
+      IpPrefix: 3.29.147.40/29
+    me-south-1:
+      IpPrefix: 16.24.46.56/29
+    sa-east-1:
+      IpPrefix: 18.228.70.32/29
+    us-east-1:
+      IpPrefix: 18.206.107.24/29
+    us-east-2:
+      IpPrefix: 3.16.146.0/29
+    us-gov-east-1:
+      IpPrefix: 18.252.4.0/30
+    us-gov-west-1:
+      IpPrefix: 15.200.28.80/30
+    us-west-1:
+      IpPrefix: 13.52.6.112/29
+    us-west-2:
+      IpPrefix: 18.237.140.160/29
+
+  CFprefixMap: # aws ec2 describe-managed-prefix-lists --query "PrefixLists[?PrefixListName=='com.amazonaws.global.cloudfront.origin-facing']" --region <REGION>
+    af-south-1:
+      PrefixList: pl-c0aa4fa9
+    ap-east-1:
+      PrefixList: pl-14b2577d
+    ap-northeast-1:
+      PrefixList: pl-58a04531
+    ap-northeast-2:
+      PrefixList: pl-22a6434b
+    ap-northeast-3:
+      PrefixList: pl-31a14458
+    ap-south-1:
+      PrefixList: pl-9aa247f3
+    ap-south-2:
+      PrefixList: pl-0a25c3463226fcc61
+    ap-southeast-1:
+      PrefixList: pl-31a34658
+    ap-southeast-2:
+      PrefixList: pl-b8a742d1
+    ap-southeast-3:
+      PrefixList: pl-bca247d5
+    ap-southeast-4:
+      PrefixList: pl-0fb7e7cfe038ae0e9
+    ca-central-1:
+      PrefixList: pl-38a64351
+    ca-west-1:
+      PrefixList: pl-0530d4c590b35122b
+    eu-central-1:
+      PrefixList: pl-a3a144ca
+    eu-central-2:
+      PrefixList: pl-00b37293991dbe6a8
+    eu-north-1:
+      PrefixList: pl-fab65393
+    eu-south-1:
+      PrefixList: pl-1bbc5972
+    eu-south-2:
+      PrefixList: pl-052dcbe0f793f19da
+    eu-west-1:
+      PrefixList: pl-4fa04526
+    eu-west-2:
+      PrefixList: pl-93a247fa
+    eu-west-3:
+      PrefixList: pl-75b1541c
+    il-central-1:
+      PrefixList: pl-0dd89524416301988
+    me-central-1:
+      PrefixList: pl-05266a86378662c23
+    me-south-1:
+      PrefixList: pl-17b2577e
+    sa-east-1:
+      PrefixList: pl-5da64334
+    us-east-1:
+      PrefixList: pl-3b927c52
+    us-east-2:
+      PrefixList: pl-b6a144df
+    us-west-1:
+      PrefixList: pl-4ea04527
+    us-west-2:
+      PrefixList: pl-82a045eb
+
+Resources:
+  instanceIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ec2.amazonaws.com]
+            Action: ["sts:AssumeRole"]
+      Path: /
+      Policies:
+        - PolicyName: dcvLicensing
+          PolicyDocument: # https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-license.html
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::dcv-license.${AWS::Region}/*"
+        - PolicyName: gpuDrivers
+          PolicyDocument: # https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/install-nvidia-driver.html https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/install-amd-driver.html
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:Get*
+                  - s3:List*
+                Resource:
+                  - !Sub "arn:*:s3:::nvidia-gaming"
+                  - !Sub "arn:*:s3:::nvidia-gaming/*"
+                  - !Sub "arn:*:s3:::ec2-linux-nvidia-drivers"
+                  - !Sub "arn:*:s3:::ec2-linux-nvidia-drivers/*"
+                  - !Sub "arn:*:s3:::ec2-amd-linux-drivers"
+                  - !Sub "arn:*:s3:::ec2-amd-linux-drivers/*"
+        - PolicyName: MountPointS3Access
+          PolicyDocument: # MountPoint for S3: https://github.com/awslabs/mountpoint-s3/blob/main/doc/CONFIGURATION.md
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::DOC-EXAMPLE-BUCKET"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                  - s3:DeleteObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::DOC-EXAMPLE-BUCKET/*"
+        - PolicyName: MountPointS3ExpressAccess
+          PolicyDocument: # MountPoint for S3: https://github.com/awslabs/mountpoint-s3/blob/main/doc/CONFIGURATION.md
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3express:CreateSession
+                Resource: !Sub "arn:${AWS::Partition}:s3express:${AWS::Region}:${AWS::AccountId}:bucket/DOC-EXAMPLE-BUCKET--az_id--x-s3"
+        - PolicyName: Route53CertbotAccess
+          PolicyDocument: # Certbot dns_route53 : https://certbot-dns-route53.readthedocs.io/en/stable/
+            Version: "2012-10-17"
+            Statement: # https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/specifying-rrset-conditions.html
+              - Effect: Allow
+                Action:
+                  - route53:ListHostedZones
+                  - route53:GetChange
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                Resource: !Sub "arn:${AWS::Partition}:route53:::hostedzone/EXAMPLE-ZONE-ID"
+                Condition:
+                  ForAllValues:StringEquals:
+                    "route53:ChangeResourceRecordSetsRecordTypes": ["TXT"]
+                  ForAllValues:StringLike:
+                    "route53:ChangeResourceRecordSetsNormalizedRecordNames":
+                      ["_acme-challenge.*"]
+        - PolicyName: Route53UpdaterAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement: # https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/specifying-rrset-conditions.html
+              - Effect: Allow
+                Action:
+                  - route53:ListHostedZones
+                  - route53:GetChange
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                Resource: !Sub "arn:${AWS::Partition}:route53:::hostedzone/EXAMPLE-ZONE-ID"
+                Condition:
+                  ForAllValues:StringEquals:
+                    "route53:ChangeResourceRecordSetsRecordTypes": ["A"]
+                  ForAllValues:StringLike:
+                    "route53:ChangeResourceRecordSetsNormalizedRecordNames":
+                      ["site.example.com"]
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy"
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/AWSXRayDaemonWriteAccess"
+      Tags:
+        - Key: StackName
+          Value: !Sub ${AWS::StackName}
+        - Key: StackId
+          Value: !Sub ${AWS::StackId}
+        - Key: GitHub
+          Value: https://github.com/aws-samples/amazon-ec2-nice-dcv-samples
+
+  instanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref instanceIamRole
+
+  securityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow inbound DCV and SSH
+      VpcId: !Ref vpcID
+      SecurityGroupIngress:
+        - Description: SSH (IPv4)
+          IpProtocol: "tcp"
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref ingressIPv4
+        - Description: SSH (IPv6)
+          IpProtocol: "tcp"
+          FromPort: 22
+          ToPort: 22
+          CidrIpv6: !Ref ingressIPv6
+        - Description: NICE DCV (IPv4)
+          IpProtocol: "tcp"
+          FromPort: !Ref listenPort
+          ToPort: !Ref listenPort
+          CidrIp: !Ref ingressIPv4
+        - Description: NICE DCV (IPv6)
+          IpProtocol: "tcp"
+          FromPort: !Ref listenPort
+          ToPort: !Ref listenPort
+          CidrIpv6: !Ref ingressIPv6
+        - Description: NICE DCV QUIC (IPv4)
+          IpProtocol: "udp"
+          FromPort: !Ref listenPort
+          ToPort: !Ref listenPort
+          CidrIp: !Ref ingressIPv4
+        - Description: NICE DCV QUIC (IPv6)
+          IpProtocol: "udp"
+          FromPort: !Ref listenPort
+          ToPort: !Ref listenPort
+          CidrIpv6: !Ref ingressIPv6
+        - !If
+          - createSgEIC
+          - Description: SSH (EC2 Instance Connect IP)
+            IpProtocol: "tcp"
+            FromPort: 22
+            ToPort: 22
+            CidrIp: !FindInMap [EICprefixMap, !Ref AWS::Region, "IpPrefix"]
+          - !Ref AWS::NoValue
+        - !If
+          - createSgHTTP
+          - Description: HTTP (IPv4)
+            IpProtocol: "tcp"
+            FromPort: 80
+            ToPort: 80
+            CidrIp: 0.0.0.0/0
+          - !Ref AWS::NoValue
+        - !If
+          - createSgHTTP
+          - Description: HTTP (IPv6)
+            IpProtocol: "tcp"
+            FromPort: 80
+            ToPort: 80
+            CidrIpv6: ::/0
+          - !Ref AWS::NoValue
+        - !If
+          - createSgHTTPS
+          - Description: HTTPS (IPv4)
+            IpProtocol: "tcp"
+            FromPort: 443
+            ToPort: 443
+            CidrIp: 0.0.0.0/0
+          - !Ref AWS::NoValue
+        - !If
+          - createSgHTTPS
+          - Description: HTTPS (IPv6)
+            IpProtocol: "tcp"
+            FromPort: 443
+            ToPort: 443
+            CidrIpv6: ::/0
+          - !Ref AWS::NoValue
+      SecurityGroupEgress:
+        - Description: Allow all outbound traffic (IPv4)
+          IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+        - Description: Allow all outbound traffic (IPv6)
+          IpProtocol: "-1"
+          CidrIpv6: ::/0
+      Tags:
+        - Key: StackName
+          Value: !Sub ${AWS::StackName}
+        - Key: StackId
+          Value: !Sub ${AWS::StackId}
+        - Key: Name
+          Value: !Sub "[${AWS::StackName}] - ${ec2Name}"
+        - Key: GitHub
+          Value: https://github.com/aws-samples/amazon-ec2-nice-dcv-samples
+
+  securityGroupForCloudFrontHTTP:
+    Type: AWS::EC2::SecurityGroup
+    Condition: createCFsgHTTP
+    Properties:
+      GroupDescription: Allow inbound HTTP from CloudFront
+      VpcId: !Ref vpcID
+      SecurityGroupIngress:
+        - Description: HTTP (CloudFront origin IP)
+          IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId:
+            !FindInMap [CFprefixMap, !Ref AWS::Region, "PrefixList"]
+      SecurityGroupEgress:
+        - Description: Ping (CloudFront origin IP)
+          IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          DestinationPrefixListId:
+            !FindInMap [CFprefixMap, !Ref AWS::Region, "PrefixList"]
+      Tags:
+        - Key: StackName
+          Value: !Sub ${AWS::StackName}
+        - Key: StackId
+          Value: !Sub ${AWS::StackId}
+        - Key: Name
+          Value: !Sub "[${AWS::StackName}] - ${ec2Name} CloudFront HTTP"
+        - Key: GitHub
+          Value: https://github.com/aws-samples/ec2-lamp-server
+
+  securityGroupForCloudFrontHTTPS:
+    Type: AWS::EC2::SecurityGroup
+    Condition: createCFsgHTTPS
+    Properties:
+      GroupDescription: Allow inbound HTTPS from CloudFront
+      VpcId: !Ref vpcID
+      SecurityGroupIngress:
+        - Description: HTTPS (CloudFront origin IP)
+          IpProtocol: "tcp"
+          FromPort: 443
+          ToPort: 443
+          SourcePrefixListId:
+            !FindInMap [CFprefixMap, !Ref AWS::Region, "PrefixList"]
+      SecurityGroupEgress:
+        - Description: Ping (CloudFront origin IP)
+          IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          DestinationPrefixListId:
+            !FindInMap [CFprefixMap, !Ref AWS::Region, "PrefixList"]
+      Tags:
+        - Key: StackName
+          Value: !Sub ${AWS::StackName}
+        - Key: StackId
+          Value: !Sub ${AWS::StackId}
+        - Key: Name
+          Value: !Sub "[${AWS::StackName}] - ${ec2Name} CloudFront HTTPS"
+        - Key: GitHub
+          Value: https://github.com/aws-samples/ec2-lamp-server
+
+  ec2Instance:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT90M
+    Metadata:
+      Comment: Install Update files
+      AWS::CloudFormation::Init:
+        configSets:
+          setup:
+            - 00_setup
+          console:
+            - 01_console
+          dcv_gpu_install:
+            - 02_dcv_gpu_install
+          console-with-NVIDIA_GRID_Driver:
+            - 03_gpu_nvidia_grid_install
+          console-with-NVIDIA_Gaming_Driver:
+            - 04_gpu_nvidia_gaming_install
+          console-with-NVIDIA_repo_Driver:
+            - 05_gpu_nvidia_repo_install
+          console-with-NVIDIA_runfile_Driver:
+            - 06_gpu_nvidia_runfile_install
+          virtual-with-NVIDIA_repo_Driver:
+            - 05_gpu_nvidia_repo_install
+          virtual-with-NVIDIA_runfile_Driver:
+            - 06_gpu_nvidia_runfile_install
+          console-with-Ubuntu_repo_Driver:
+            - 07_gpu_ubuntu_driver_install
+          console-with-AMD_ROCm_repo_Driver:
+            - 08_gpu_amd_rocm_repo_install
+        00_setup: # in the following order: packages, groups, users, sources, files, commands, and then services.
+          files:
+            "/home/ubuntu/update-dcv":
+              content: |
+                #!/bin/bash
+                cd /tmp
+                sudo dcv close-session ubuntu
+                sudo dcv close-session console
+                if ((arch | grep -q x86) && (cat /etc/os-release | grep -q 22.04)); then
+                  rm -f /tmp/nice-dcv-ubuntu2204-x86_64.tgz
+                  wget https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz
+                  tar -xvzf nice-dcv-ubuntu*.tgz && cd nice-dcv-*-x86_64
+                elif ((arch | grep -q aarch) && (cat /etc/os-release | grep -q 22.04)); then
+                  rm -f /tmp/nice-dcv-ubuntu2204-aarch64.tgz
+                  wget https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-aarch64.tgz
+                  tar -xvzf nice-dcv-ubuntu*.tgz && cd nice-dcv-*-aarch64
+                else
+                  rm -f nice-dcv-ubuntu2004-x86_64.tgz
+                  wget https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2004-x86_64.tgz
+                  tar -xvzf nice-dcv-ubuntu*.tgz && cd nice-dcv-*-x86_64
+                fi
+                sudo systemctl stop dcvserver
+                sudo apt-get install -y ./nice-dcv-server_*.deb
+                sudo apt-get install -y ./nice-dcv-web-viewer_*.deb
+                sudo apt-get install -y ./nice-xdcv_*.deb
+                sudo apt-get install -y ./nice-dcv-gltest_*.deb
+                sudo systemctl restart dcvserver
+              mode: "000755"
+              owner: "ubuntu"
+              group: "ubuntu"
+            "/home/ubuntu/update-awscli":
+              content: |
+                #!/bin/bash
+                cd /tmp
+                rm -f awscliv2.zip
+                if (arch | grep -q x86); then
+                  curl https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
+                else
+                  curl https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip -o awscliv2.zip
+                fi
+                unzip -q -o awscliv2.zip
+                /usr/bin/aws --version
+                sudo ./aws/install --update -b /usr/bin
+                /usr/bin/aws --version
+              mode: "000755"
+              owner: "ubuntu"
+              group: "ubuntu"
+            "/home/ubuntu/update-mountpoint-s3":
+              content: |
+                #!/bin/bash
+                cd /tmp
+                rm -f mount-s3.rpm
+                if (uname -a | grep -q x86); then
+                  wget -4 https://s3.amazonaws.com/mountpoint-s3-release/latest/x86_64/mount-s3.deb
+                else
+                  wget -4 https://s3.amazonaws.com/mountpoint-s3-release/latest/arm64/mount-s3.deb
+                fi
+                sudo apt-get install -y ./mount-s3.rpm
+              mode: "000755"
+              owner: "ubuntu"
+              group: "ubuntu"
+            "/etc/systemd/system/mount-s3-helper.service":
+              content: |
+                # https://github.com/awslabs/mountpoint-s3/blob/main/doc/CONFIGURATION.md#automatically-mounting-an-s3-bucket-at-boot
+                [Unit]
+                Description=Mountpoint for S3 helper
+                Wants=network.target
+
+                [Service]
+                Restart=on-failure
+                RestartSec=5
+                Type=forking
+                ExecStart=/opt/mount-s3-helper.sh
+                ExecStop=/usr/bin/fusermount -u /mnt/s3-bucket-mount
+
+                [Install]
+                WantedBy=remote-fs.target
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            "/opt/mount-s3-helper.sh":
+              content: |
+                #!/bin/bash
+                S3_BUCKET_NAME=DOC-EXAMPLE-BUCKET
+                MOUNT_FOLDER=/mnt/s3-bucket-mount
+                USER=ubuntu
+                GROUP=ubuntu
+
+                USERID=$(cat /etc/passwd | grep ^$USER: | cut -d":" -f 3)
+                GROUPID=$(cat /etc/group | grep ^$GROUP: | cut -d":" -f 3)
+                mkdir -p $MOUNT_FOLDER
+
+                /usr/bin/mount-s3 --uid $USERID --gid $GROUPID --allow-overwrite --allow-delete --allow-other $S3_BUCKET_NAME $MOUNT_FOLDER
+              mode: "000744"
+              owner: "root"
+              group: "root"
+            "/etc/systemd/system/route53-updater.service":
+              content: |
+                [Unit]
+                Description=Route53 DNS updater
+                After=network.target
+
+                [Service]
+                Restart=on-failure
+                RestartSec=5
+                Type=oneshot
+                ExecStart=/opt/route53-updater.sh
+                RemainAfterExit=true
+
+                [Install]
+                WantedBy=multi-user.target
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            "/opt/route53-updater.sh":
+              content: !Sub |
+                #!/bin/bash
+                R53_ZONE_ID=EXAMPLE-ZONE-ID
+                DNS_ENTRY=site.example.com
+
+                AWS_IP=`curl -s checkip.amazonaws.com`
+                aws route53 change-resource-record-sets --cli-input-json '{
+                "HostedZoneId": "/hostedzone/'$R53_ZONE_ID'",
+                "ChangeBatch": {
+                    "Comment": "Stack ${AWS::StackName}",
+                    "Changes": [
+                        {
+                          "Action": "UPSERT",
+                          "ResourceRecordSet": {
+                              "Name": "'$DNS_ENTRY'",
+                              "Type": "A",
+                              "TTL": 60,
+                            "ResourceRecords": [
+                              {
+                                "Value": "'$AWS_IP'"
+                              }
+                            ]
+                          }
+                        }
+                    ]
+                }}'
+              mode: "000755"
+              owner: "root"
+              group: "root"
+            "/etc/systemd/system/dcv-virtual-session.service":
+              content: |
+                [Unit]
+                Description=Create DCV virtual session
+                After=default.target network.target
+
+                [Service]
+                ExecStart=/opt/dcv-virtual-session.sh
+
+                [Install]
+                WantedBy=default.target
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            "/opt/dcv-virtual-session.sh":
+              content: |
+                #!/bin/bash
+                dcvUsers=( "ubuntu" )
+                while true;
+                do
+                  for dcvUser in "${dcvUsers[@]}"
+                  do
+                    if (! /usr/bin/dcv list-sessions | grep -q $dcvUser); then
+                      case $dcvUser in
+                        root)
+                          /usr/bin/dcv create-session $dcvUser --owner root --storage-root /root
+                          ;;
+                        *)
+                          /usr/bin/dcv create-session $dcvUser --owner $dcvUser --storage-root /home/$dcvUser
+                          ;;
+                      esac
+                    fi
+                  done
+                  /usr/bin/dcv list-sessions
+                  sleep 5
+                done
+              mode: "000755"
+              owner: "root"
+              group: "root"
+            "/etc/systemd/system/dcv-post-reboot.service":
+              content: |
+                [Unit]
+                Description=Post install tasks
+                After=default.target network.target
+
+                [Service]
+                ExecStart=/opt/dcv-post-reboot.sh
+
+                [Install]
+                WantedBy=default.target
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            "/opt/dcv-post-reboot.sh":
+              content: !Sub |
+                #!/bin/bash
+                sysctl -w net.ipv6.conf.all.disable_ipv6=1
+                sysctl -w net.ipv6.conf.default.disable_ipv6=1
+                export DEBIAN_FRONTEND=noninteractive
+
+                # USB remotization: https://docs.aws.amazon.com/dcv/latest/adminguide/manage-usb-remote.html
+                apt-get install -q -y linux-headers-aws
+                apt-get install -q -y linux-modules-extra-aws
+                apt-get install -q -y usbutils
+                # dcvusbdriverinstaller --quiet
+
+                python3 /usr/local/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ec2Instance --region ${AWS::Region}
+                sysctl -w net.ipv6.conf.all.disable_ipv6=0
+                sysctl -w net.ipv6.conf.default.disable_ipv6=0
+
+                SESSION="${sessionType}"
+                case $SESSION in
+                  console-with-NVIDIA*)
+                    nvidia-xconfig --preserve-busid --enable-all-gpus
+                    ;;
+                  console-with-Ubuntu*)
+                    nvidia-xconfig --preserve-busid --enable-all-gpus
+                    ;;
+                esac
+
+                # virtual or console session: https://docs.aws.amazon.com/dcv/latest/adminguide/config-param-ref.html
+                case $SESSION in
+                  console*)
+                    systemctl set-default graphical.target && systemctl isolate graphical.target
+                    sed -i "s/^#create-session/create-session/g" /etc/dcv/dcv.conf
+                    ;;
+                  virtual*)
+                    systemctl enable dcv-virtual-session && systemctl restart dcv-virtual-session
+                    ;;
+                esac
+                systemctl enable dcvserver && systemctl restart dcvserver
+
+                rm -f /etc/systemd/system/dcv-post-reboot.service
+                rm -f ${!0}
+                systemctl daemon-reload
+              mode: "000755"
+              owner: "root"
+              group: "root"
+            "/home/ubuntu/install-NVIDIA-GRID-driver":
+              content: |
+                #!/bin/bash
+                clear
+                echo  
+                echo    NOTICE: These downloads are for GPU instances and are available to AWS customers only
+                echo  
+                echo By downloading, you agree to conditions and are bound by license terms as stated on 
+                echo    https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/install-nvidia-driver.html
+                echo 
+                mkdir -p /tmp/drivers
+                cd /tmp/drivers
+                sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+                sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1                
+                aws s3 cp --recursive s3://ec2-linux-nvidia-drivers/latest/ .
+                if [ $? -eq 1 ]; then
+                  aws s3 cp --recursive s3://ec2-linux-nvidia-drivers/latest/ . --region us-east-1
+                fi
+                if [ $? -eq 1 ]; then
+                  aws s3 cp --recursive s3://ec2-linux-nvidia-drivers/latest/ . --no-sign-request
+                fi
+                sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
+                sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
+                sudo systemctl isolate multi-user.target
+                chmod +x NVIDIA-Linux-x86_64*.run
+                sudo ./NVIDIA-Linux-x86_64*.run
+                pwd
+              mode: "000755"
+              owner: "ubuntu"
+              group: "ubuntu"
+            "/home/ubuntu/install-NVIDIA-Gaming-driver":
+              content: |
+                #!/bin/bash
+                clear
+                echo  
+                echo    NOTICE: These downloads are for GPU instances and are available to AWS customers only
+                echo  
+                echo By downloading, you agree to conditions and are bound by license terms as stated on 
+                echo    https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/install-nvidia-driver.html
+                echo 
+                mkdir -p /tmp/drivers
+                cd /tmp/drivers
+                pwd
+                sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+                sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
+                aws s3 cp --recursive s3://nvidia-gaming/linux/latest/ .
+                if [ $? -eq 1 ]; then
+                  aws s3 cp --recursive s3://nvidia-gaming/linux/latest/ . --region us-east-1
+                fi
+                if [ $? -eq 1 ]; then
+                  aws s3 cp --recursive s3://nvidia-gaming/linux/latest/ . --no-sign-request
+                fi
+                sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
+                sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
+                sudo systemctl isolate multi-user.target
+                unzip *Gaming-Linux-Guest-Drivers.zip -d nvidia-drivers
+                chmod +x nvidia-drivers/NVIDIA-Linux-x86_64*-grid.run
+                sudo ./nvidia-drivers/NVIDIA-Linux-x86_64*.run
+                pwd
+              mode: "000755"
+              owner: "ubuntu"
+              group: "ubuntu"
+            "/home/ubuntu/install-AMD-driver":
+              content: |
+                #!/bin/bash
+                clear
+                echo  
+                echo    NOTICE: These downloads are for GPU instances and are available to AWS customers only
+                echo  
+                echo By downloading, you agree to conditions and are bound by license terms as stated on 
+                echo    https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/install-amd-driver.html
+                echo 
+                mkdir -p /tmp/drivers                
+                cd /tmp/drivers
+                pwd
+                sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+                sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
+                aws s3 cp --recursive s3://ec2-amd-linux-drivers/latest/ .
+                if [ $? -eq 1 ]; then
+                  aws s3 cp --recursive s3://ec2-amd-linux-drivers/latest/ . --region us-east-1
+                fi
+                if [ $? -eq 1 ]; then
+                  aws s3 cp --recursive s3://ec2-amd-linux-drivers/latest/ . --no-sign-request
+                fi
+                sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
+                sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
+                sudo systemctl isolate multi-user.target
+                tar -xf amdgpu-pro-*ubuntu*.tar.xz
+                rm -f *.tar.xz
+                cd amdgpu-pro*
+                sudo ./amdgpu-pro-install --opencl=pal,legacy
+                pwd
+              mode: "000755"
+              owner: "ubuntu"
+              group: "ubuntu"
+        01_console:
+          files:
+            "/etc/X11/xorg.conf": # Modeline generator at http://xtiming.sourceforge.net/
+              content: |
+                Section "Device"
+                    Identifier "DummyDevice"
+                    Driver "dummy"
+                    Option "ConstantDPI" "true"
+                    Option "IgnoreEDID" "true"
+                    Option "NoDDC" "true"
+                    VideoRam 2048000
+                EndSection
+
+                Section "Monitor"
+                    Identifier "DummyMonitor"
+                    HorizSync   5.0 - 1000.0
+                    VertRefresh 5.0 - 200.0
+                    Modeline "4096x2160" 760.00 4096 4432 4880 5664 2160 2163 2173 2237
+                    Modeline "3840x2160" 712.75 3840 4160 4576 5312 2160 2163 2168 2237
+                    Modeline "2560x1440" 312.25 2560 2752 3024 3488 1440 1443 1448 1493
+                    Modeline "2048x1536" 80.06 2048 2104 2312 2576 1536 1537 1540 1554
+                    Modeline "1920x1440" 69.47 1920 1960 2152 2384 1440 1441 1444 1457
+                    Modeline "1920x1200" 26.28 1920 1952 2048 2080 1200 1229 1231 1261
+                    Modeline "1920x1080" 23.53 1920 1952 2040 2072 1080 1106 1108 1135
+                    Modeline "1600x900" 33.92 1600 1632 1760 1792 900 921 924 946
+                    Modeline "1440x900" 30.66 1440 1472 1584 1616 900 921 924 946
+                    ModeLine "1366x768" 72.00 1366 1414 1446 1494  768 771 777 803
+                    Modeline "1280x800" 24.15 1280 1312 1400 1432 800 819 822 841
+                    Modeline "1024x768" 18.71 1024 1056 1120 1152 768 786 789 807
+                EndSection
+
+                Section "Screen"
+                    Identifier "DummyScreen"
+                    Device "DummyDevice"
+                    Monitor "DummyMonitor"
+                    DefaultDepth 24
+                    SubSection "Display"
+                        Viewport 0 0
+                        Depth 24
+                        Modes "4096x2160" "3840x2160" "2560x1440" "2048x1536" "1920x1440" "1920x1200" "1920x1080" "1600x900" "1440x900" "1366x768" "1280x800" "1024x768"                        
+                        virtual 4096 2160
+                    EndSubSection
+                EndSection
+              mode: "000644"
+              owner: "root"
+              group: "root"
+        02_dcv_gpu_install:
+          files:
+            "/etc/systemd/system/dcv-gpu-install.service":
+              content: |
+                [Unit]
+                Description=Install GPU driver
+                After=default.target network.target
+
+                [Service]
+                ExecStart=/opt/install-gpu-driver
+
+                [Install]
+                WantedBy=default.target
+              mode: "000644"
+              owner: "root"
+              group: "root"
+        03_gpu_nvidia_grid_install:
+          files:
+            "/opt/install-gpu-driver": # https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/install-nvidia-driver.html#nvidia-GRID-driver
+              content: |
+                #!/bin/bash
+                mkdir -p /tmp/gpu
+                cd /tmp/gpu
+                sysctl -w net.ipv6.conf.all.disable_ipv6=1
+                sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
+                apt-get install -q -y linux-headers-aws
+                apt-get install -q -y linux-modules-extra-aws
+                aws s3 cp --recursive s3://ec2-linux-nvidia-drivers/latest/ .
+                if [ $? -eq 1 ]; then
+                  aws s3 cp --recursive s3://ec2-linux-nvidia-drivers/latest/ . --region us-east-1
+                fi
+                if [ $? -eq 1 ]; then
+                  aws s3 cp --recursive s3://ec2-linux-nvidia-drivers/latest/ . --no-sign-request
+                fi
+                sysctl -w net.ipv6.conf.all.disable_ipv6=0
+                sysctl -w net.ipv6.conf.default.disable_ipv6=0
+
+                chmod +x NVIDIA-Linux-x86_64*.run
+                ./NVIDIA-Linux-x86_64*.run -s
+
+                touch /etc/modprobe.d/nvidia.conf
+                echo "options nvidia NVreg_EnableGpuFirmware=0" | tee --append /etc/modprobe.d/nvidia.conf
+
+                systemctl enable dcv-post-reboot
+                rm -f /etc/systemd/system/dcv-gpu-install.service
+                rm -f ${0}
+                reboot
+              mode: "000755"
+              owner: "root"
+              group: "root"
+        04_gpu_nvidia_gaming_install:
+          files:
+            "/opt/install-gpu-driver": # https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/install-nvidia-driver.html#nvidia-gaming-driver
+              content: |
+                #!/bin/bash
+                mkdir -p /tmp/gpu
+                cd /tmp/gpu
+                sysctl -w net.ipv6.conf.all.disable_ipv6=1
+                sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
+                apt-get install -q -y linux-headers-aws
+                apt-get install -q -y linux-modules-extra-aws
+                aws s3 cp --recursive s3://nvidia-gaming/linux/latest/ .
+                if [ $? -eq 1 ]; then
+                  aws s3 cp --recursive s3://nvidia-gaming/linux/latest/ . --region us-east-1
+                fi
+                if [ $? -eq 1 ]; then
+                  aws s3 cp --recursive s3://nvidia-gaming/linux/latest/ . --no-sign-request
+                fi
+                sysctl -w net.ipv6.conf.all.disable_ipv6=0
+                sysctl -w net.ipv6.conf.default.disable_ipv6=0
+
+                unzip *Gaming-Linux-Guest-Drivers.zip -d nvidia-drivers
+                chmod +x nvidia-drivers/NVIDIA-Linux-x86_64*-grid.run
+                ./nvidia-drivers/NVIDIA-Linux-x86_64*.run -s
+
+                cat << EOF | tee -a /etc/nvidia/gridd.conf
+                vGamingMarketplace=2
+                EOF
+
+                curl -L -o /etc/nvidia/GridSwCert.txt "https://nvidia-gaming.s3.amazonaws.com/GridSwCert-Archive/GridSwCertLinux_2023_9_22.cert"
+
+                touch /etc/modprobe.d/nvidia.conf
+                echo "options nvidia NVreg_EnableGpuFirmware=0" | tee --append /etc/modprobe.d/nvidia.conf
+
+                systemctl enable dcv-post-reboot
+                rm -f /etc/systemd/system/dcv-gpu-install.service
+                rm -f ${0}
+                reboot
+              mode: "000755"
+              owner: "root"
+              group: "root"
+        05_gpu_nvidia_repo_install:
+          files: # https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#ubuntu
+            "/opt/install-gpu-driver": # https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes/index.html#ubuntu-lts
+              content: |
+                #!/bin/bash
+                mkdir -p /tmp/gpu
+                cd /tmp/gpu
+                sysctl -w net.ipv6.conf.all.disable_ipv6=1
+                sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
+                apt-get install -q -y linux-headers-aws
+                apt-get install -q -y linux-modules-extra-aws
+                DISTRO=$(. /etc/os-release;echo $ID$VERSION_ID | sed -e 's/\.//g')
+                if (arch | grep -q x86); then
+                  ARCH=x86_64
+                else
+                  ARCH=sbsa
+                fi
+                curl -s -L -O https://developer.download.nvidia.com/compute/cuda/repos/$DISTRO/$ARCH/cuda-keyring_1.1-1_all.deb
+                apt-get install -q -y ./cuda-keyring_1.1-1_all.deb
+                apt-get update -q
+                apt-get install -q -y cuda-drivers
+                apt-get install -q -y nvidia-settings
+
+                # CUDA toolkit: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#additional-package-manager-capabilities
+                #apt-get install -q -y cuda-toolkit
+                # cuDNN: https://docs.nvidia.com/deeplearning/cudnn/installation/linux.html#additional-package-manager-capabilities
+                #apt-get install -q -y cudnn
+
+                sysctl -w net.ipv6.conf.all.disable_ipv6=0
+                sysctl -w net.ipv6.conf.default.disable_ipv6=0
+
+                systemctl enable dcv-post-reboot
+                rm -f /etc/systemd/system/dcv-gpu-install.service
+                rm -f ${0}
+                reboot
+              mode: "000755"
+              owner: "root"
+              group: "root"
+        06_gpu_nvidia_runfile_install:
+          files:
+            "/opt/install-gpu-driver": # https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes/index.html#runfile
+              content: !Sub |
+                #!/bin/bash
+                mkdir -p /tmp/gpu
+                cd /tmp/gpu
+                sysctl -w net.ipv6.conf.all.disable_ipv6=1
+                sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
+                apt-get install -q -y linux-headers-aws
+                apt-get install -q -y linux-modules-extra-aws
+                DRIVER_VERSION="${teslaDriverVersion}"
+                ARCH=$( /bin/arch )
+                curl -fSsl -O https://us.download.nvidia.com/tesla/$DRIVER_VERSION/NVIDIA-Linux-$ARCH-$DRIVER_VERSION.run
+
+                sysctl -w net.ipv6.conf.all.disable_ipv6=0
+                sysctl -w net.ipv6.conf.default.disable_ipv6=0
+
+                chmod +x ./NVIDIA-Linux-*.run
+                ./NVIDIA-Linux-*.run -s
+
+                systemctl enable dcv-post-reboot
+                rm -f /etc/systemd/system/dcv-gpu-install.service
+                rm -f ${!0}
+                reboot
+              mode: "000755"
+              owner: "root"
+              group: "root"
+        07_gpu_ubuntu_driver_install:
+          files:
+            "/opt/install-gpu-driver": # https://ubuntu.com/server/docs/nvidia-drivers-installation
+              content: !Sub |
+                #!/bin/bash
+                mkdir -p /tmp/gpu
+                cd /tmp/gpu
+                sysctl -w net.ipv6.conf.all.disable_ipv6=1
+                sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -q
+                apt-get install -q -y linux-headers-aws
+                apt-get install -q -y linux-modules-extra-aws
+                apt-get install -q -y ubuntu-drivers-common
+                # Ubnutu-drivers list (x86_64 only)=> nvidia-driver-535-server, .... 
+                if (arch | grep -q x86); then 
+                  VERSION=$(ubuntu-drivers list --gpgpu | grep "-server" | cut -d"-" -f3 | sort -r | head -n 1)
+                  ubuntu-drivers install --gpgpu nvidia:$VERSION-server
+                else
+                  VERSION=$(apt-cache search "nvidia-driver" | grep "^nvidia-driver-.*-server" | cut -d"-" -f3 | sort -r | head -n 1)
+                  apt-get install -q -y linux-modules-nvidia-$VERSION-server-aws nvidia-dkms-$VERSION-server                  
+                fi
+                apt-get install -q -y nvidia-driver-$VERSION-server nvidia-utils-$VERSION-server
+                apt-get install -q -y nvidia-settings
+
+                # CUDA toolkit
+                #apt-get install -q -y nvidia-cuda-toolkit
+                # cuDNN
+                #apt-get install -q -y nvidia-cudnn
+
+                sysctl -w net.ipv6.conf.all.disable_ipv6=0
+                sysctl -w net.ipv6.conf.default.disable_ipv6=0
+
+                systemctl enable dcv-post-reboot
+                rm -f /etc/systemd/system/dcv-gpu-install.service
+                rm -f ${!0}
+                reboot
+              mode: "000755"
+              owner: "ubuntu"
+              group: "ubuntu"
+        08_gpu_amd_rocm_repo_install:
+          files:
+            "/opt/install-gpu-driver": # https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/native-install/package-manager-integration.html
+              content: |
+                #!/bin/bash
+                mkdir -p /tmp/gpu
+                cd /tmp/gpu
+                sysctl -w net.ipv6.conf.all.disable_ipv6=1
+                sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
+                apt-get install -q -y linux-headers-aws
+                apt-get install -q -y linux-modules-extra-aws
+
+                usermod -aG video,render ubuntu
+
+                apt-get install -q -y amdgpu
+                apt-get install -q -y rocminfo
+
+                sed -i "/^#target-fps/a target-fps=60" /etc/dcv/dcv.conf
+
+                sysctl -w net.ipv6.conf.all.disable_ipv6=0
+                sysctl -w net.ipv6.conf.default.disable_ipv6=0
+
+                systemctl enable dcv-post-reboot
+                rm -f /etc/systemd/system/dcv-gpu-install.service
+                rm -f ${0}
+                reboot
+              mode: "000755"
+              owner: "root"
+              group: "root"
+            "/etc/apt/sources.list.d/amdgpu.list":
+              content: |
+                deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/amdgpu/latest/ubuntu DISTRO main
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            "/etc/apt/sources.list.d/rocm.list":
+              content: |
+                deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/latest DISTRO main
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            "/etc/apt/preferences.d/rocm-pin-600":
+              content: |
+                Package: *
+                Pin: release o=repo.radeon.com
+                Pin-Priority: 600
+              mode: "000644"
+              owner: "root"
+              group: "root"
+            "/etc/X11/xorg.conf":
+              content: |
+                Section "ServerLayout"
+                    Identifier     "Layout0"
+                    Screen          0 "Screen0"
+                    InputDevice     "Keyboard0" "CoreKeyboard"
+                    InputDevice     "Mouse0" "CorePointer"
+                EndSection
+                Section "Files"
+                    ModulePath "/opt/amdgpu/lib64/xorg/modules/drivers"
+                    ModulePath "/opt/amdgpu/lib/xorg/modules"
+                    ModulePath "/opt/amdgpu-pro/lib/xorg/modules/extensions"
+                    ModulePath "/opt/amdgpu-pro/lib64/xorg/modules/extensions"
+                    ModulePath "/usr/lib64/xorg/modules"
+                    ModulePath "/usr/lib/xorg/modules"
+                EndSection
+                Section "InputDevice"
+                    # generated from default
+                    Identifier     "Mouse0"
+                    Driver         "mouse"
+                    Option         "Protocol" "auto"
+                    Option         "Device" "/dev/psaux"
+                    Option         "Emulate3Buttons" "no"
+                    Option         "ZAxisMapping" "4 5"
+                EndSection
+                Section "InputDevice"
+                    # generated from default
+                    Identifier     "Keyboard0"
+                    Driver         "kbd"
+                EndSection
+                Section "Monitor"
+                    Identifier     "Monitor0"
+                    VendorName     "Unknown"
+                    ModelName      "Unknown"
+                EndSection
+                Section "Device"
+                    Identifier     "Device0"
+                    Driver         "amdgpu"
+                    VendorName     "AMD"
+                    BoardName      "Radeon MxGPU V520"
+                    BusID          "PCI:0:30:0"
+                EndSection
+                Section "Extensions"
+                    Option         "DPMS" "Disable"
+                EndSection
+                Section "Screen"
+                    Identifier     "Screen0"
+                    Device         "Device0"
+                    Monitor        "Monitor0"
+                    DefaultDepth   24
+                    Option         "AllowEmptyInitialConfiguration" "True"
+                    SubSection "Display"
+                        Virtual    3840 2160
+                        Depth      32
+                    EndSubSection
+                EndSection
+              mode: "000644"
+              owner: "root"
+              group: "root"
+    Properties:
+      ImageId: # https://ubuntu.com/server/docs/cloud-images/amazon-ec2 https://ubuntu.com/blog/ubuntu-pro-is-now-part-of-the-aws-ec2-console
+        !If [
+          useUbuntu2204x86,
+          "{{resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id}}",
+          !If [
+            useUbuntu2204arm64,
+            "{{resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id}}",
+            !If [
+              useUbuntu2004x86,
+              "{{resolve:ssm:/aws/service/canonical/ubuntu/server/20.04/stable/current/amd64/hvm/ebs-gp2/ami-id}}",
+              !If [
+                useUbuntu1804x86,
+                "{{resolve:ssm:/aws/service/canonical/ubuntu/server/18.04/stable/current/amd64/hvm/ebs-gp2/ami-id}}",
+                !If [
+                  useUbuntu1804arm64,
+                  "{{resolve:ssm:/aws/service/canonical/ubuntu/server/18.04/stable/current/arm64/hvm/ebs-gp2/ami-id}}",
+                  !If [
+                    useUbuntuPro2204x86,
+                    "{{resolve:ssm:/aws/service/canonical/ubuntu/pro-server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id}}",
+                    !If [
+                      useUbuntuPro2204arm64,
+                      "{{resolve:ssm:/aws/service/canonical/ubuntu/pro-server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id}}",
+                      !If [
+                        useUbuntuPro2004x86,
+                        "{{resolve:ssm:/aws/service/canonical/ubuntu/pro-server/20.04/stable/current/amd64/hvm/ebs-gp2/ami-id}}",
+                        !If [
+                          useUbuntuPro1804x86,
+                          "{{resolve:ssm:/aws/service/canonical/ubuntu/pro-server/18.04/stable/current/amd64/hvm/ebs-gp2/ami-id}}",
+                          "{{resolve:ssm:/aws/service/canonical/ubuntu/pro-server/18.04/stable/current/arm64/hvm/ebs-gp2/ami-id}}",
+                        ],
+                      ],
+                    ],
+                  ],
+                ],
+              ],
+            ],
+          ],
+        ]
+      InstanceType: !Ref instanceType
+      IamInstanceProfile: !Ref instanceProfile
+      KeyName: !Ref ec2KeyPair
+      SubnetId: !Ref subnetID
+      Monitoring: true
+      SecurityGroupIds:
+        - !Ref securityGroup
+        - !If [
+            createCFsgHTTP,
+            !Ref securityGroupForCloudFrontHTTP,
+            !Ref AWS::NoValue,
+          ]
+        - !If [
+            createCFsgHTTPS,
+            !Ref securityGroupForCloudFrontHTTPS,
+            !Ref AWS::NoValue,
+          ]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: !Ref volumeType
+            VolumeSize: !Ref volumeSize
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          mkdir -p /tmp/cfn
+          cd /tmp/cfn
+
+          # disable IPv6 during setup
+          sysctl -w net.ipv6.conf.all.disable_ipv6=1
+          sysctl -w net.ipv6.conf.default.disable_ipv6=1
+
+          # https://stackoverflow.com/questions/33370297/apt-get-update-non-interactive
+          export DEBIAN_FRONTEND=noninteractive
+
+          apt-get clean all
+          apt-get update -q
+          apt-get install -q -y wget tmux unzip tar curl sed
+
+          # EC2 Instance Connect: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-connect-set-up.html
+          if (cat /etc/os-release | grep -q 18.04); then
+            apt-get install -q -y ec2-instance-connect
+          fi
+
+          # CfN scripts: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/cfn-helper-scripts-reference.html
+          apt-get install -q -y python3 python3-pip python3-setuptools python3-docutils python3-daemon
+          curl -s -L -O https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
+          tar -xf aws-cfn-bootstrap-py3-latest.tar.gz
+          cd aws-cfn-bootstrap-2.0
+          python3 setup.py build
+          python3 setup.py install
+          cd /tmp/cfn
+          export CFN_INIT="python3 /usr/local/bin/cfn-init"
+
+          $CFN_INIT -v --stack ${AWS::StackName} --resource ec2Instance --region ${AWS::Region} -c setup
+
+          # NICE DCV prereq: https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing-linux-prereq.html
+          if (cat /etc/os-release | grep -q 18.04); then
+            apt-get install -q -y ubuntu-desktop
+          else
+            apt-get install -q -y ubuntu-desktop-minimal 
+          fi
+          apt-get install -q -y gdm3
+          # Microphone redirection: https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing-linux-server.html
+          apt-get install -q -y pulseaudio-utils
+          apt-get install -q -y gnome-tweaks gnome-shell-extension-ubuntu-dock
+          if (cat /etc/os-release | grep -q 22.04); then
+            apt-get install -q -y gnome-shell-extension-manager
+          fi
+
+          # Disable the Wayland protocol: https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing-linux-prereq.html#linux-prereq-wayland
+          sed -i '/^\[daemon\]/a WaylandEnable=false' /etc/gdm3/custom.conf
+
+          # resolve "/var/lib/dpkg/info/nice-dcv-server.postinst: 8: dpkg-architecture: not found" when installing dcv-server
+          apt-get install -q -y dpkg-dev
+
+          # NICE DCV: https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing-linux-server.html
+          curl -s -L -O https://d1uj6qtbmh3dt5.cloudfront.net/NICE-GPG-KEY
+          gpg --import NICE-GPG-KEY
+          if ((arch | grep -q x86) && (cat /etc/os-release | grep -q 22.04)); then
+            curl -s -L -O https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-x86_64.tgz
+            tar -xvzf nice-dcv-ubuntu*.tgz && cd nice-dcv-*-x86_64
+          elif ((arch | grep -q aarch) && (cat /etc/os-release | grep -q 22.04)); then
+            curl -s -L -O https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2204-aarch64.tgz
+            tar -xvzf nice-dcv-ubuntu*.tgz && cd nice-dcv-*-aarch64
+          elif ((arch | grep -q x86) && (cat /etc/os-release | grep -q 18.04)); then
+            rm -f /home/ubuntu/update-dcv
+            curl -s -L -O https://d1uj6qtbmh3dt5.cloudfront.net/2023.0/Servers/nice-dcv-2023.0-15487-ubuntu1804-x86_64.tgz
+            tar -xvzf nice-dcv-*-x86_64.tgz && cd nice-dcv-*-x86_64
+          elif (cat /etc/os-release | grep -q 18.04); then
+            rm -f /home/ubuntu/update-dcv
+            curl -s -L -O https://d1uj6qtbmh3dt5.cloudfront.net/2023.0/Servers/nice-dcv-2023.0-15487-ubuntu1804-aarch64.tgz
+            tar -xvzf nice-dcv-*-aarch64.tgz && cd nice-dcv-*-aarch64
+          else
+            curl -s -L -O https://d1uj6qtbmh3dt5.cloudfront.net/nice-dcv-ubuntu2004-x86_64.tgz
+            tar -xvzf nice-dcv-ubuntu*.tgz && cd nice-dcv-*-x86_64
+          fi
+          apt-get install -q -y ./nice-dcv-server_*.deb
+          apt-get install -q -y ./nice-dcv-web-viewer_*.deb
+          usermod -aG video dcv
+          apt-get install -q -y ./nice-xdcv_*.deb
+          apt-get install -q -y ./nice-dcv-gltest_*.deb
+
+          # Printer redirection: https://docs.aws.amazon.com/dcv/latest/adminguide/manage-printer.html
+          apt-get install -q -y cups
+          GROUP=$(cat /etc/cups/cups-files.conf | grep -oP "SystemGroup\s\K\w+")
+          usermod -a -G $GROUP dcv
+          systemctl enable cups
+
+          # glxinfo and VAAPI : https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-installing-linux-prereq.html#linux-prereq-tools
+          apt-get install -q -y mesa-utils
+          apt-get install -q -y libva2 libva-drm2 vainfo
+
+          # QUIC: https://docs.aws.amazon.com/dcv/latest/adminguide/enable-quic.html
+          cp /etc/dcv/dcv.conf /etc/dcv/dcv.conf."`date +"%Y-%m-%d"`"
+          sed -i "s/^#enable-quic-frontend=true/enable-quic-frontend=true/g" /etc/dcv/dcv.conf
+
+          # Listen port: https://docs.aws.amazon.com/dcv/latest/adminguide/manage-port-addr.html
+          sed -i "/^web-port=/d" /etc/dcv/dcv.conf
+          sed -i "/^quic-port=/d" /etc/dcv/dcv.conf
+          sed -i "/^\[connectivity\]/a web-port=${listenPort}" /etc/dcv/dcv.conf
+          sed -i "/^\[connectivity\]/a quic-port=${listenPort}" /etc/dcv/dcv.conf
+
+          # remove AWSCLI version 1
+          apt-get remove -q -y awscli
+
+          cd /tmp/cfn
+          # AWS CLI v2: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+          if (arch | grep -q x86); then
+            curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
+          else
+            curl -s https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip -o awscliv2.zip
+          fi
+          unzip -q -o awscliv2.zip
+          ./aws/install -b /usr/bin
+          echo "export AWS_CLI_AUTO_PROMPT=on-partial" >> /home/ubuntu/.bashrc
+
+          # X11 dummy driver for non GPU instance console session
+          apt-get install -q -y xserver-xorg-video-dummy
+          $CFN_INIT -v --stack ${AWS::StackName} --resource ec2Instance --region ${AWS::Region} -c console
+
+          # Higher web client max resolution: https://docs.aws.amazon.com/dcv/latest/adminguide/config-param-ref.html
+          sed -i "/^\[display/a web-client-max-head-resolution=(4096, 2160)" /etc/dcv/dcv.conf
+          # Console session support
+          sed -i "/^\[session-management\/automatic-console-session/a owner=\"ubuntu\"\nstorage-root=\"\/home\/ubuntu\"" /etc/dcv/dcv.conf
+
+          # Update OS
+          apt-get update -q
+          apt-get upgrade -q -y
+          apt-get autoremove -q -y
+
+          # USB and GPU driver DKMS
+          apt-get install -q -y dkms
+
+          # Disable reporting : https://wiki.ubuntu.com/Apport
+          sed -i "s/enabled=1/enable=0/g" /etc/default/apport
+          apt-get remove -q -y ubuntu-report whoopsie apport
+
+          # 
+          systemctl set-default multi-user.target
+          systemctl daemon-reload
+          systemctl enable dcv-post-reboot
+
+          export SESSION="${sessionType}"
+          case $SESSION in
+            *Ubuntu*) # https://ubuntu.com/server/docs/nvidia-drivers-installation
+              systemctl disable dcv-post-reboot
+
+              $CFN_INIT -v --stack ${AWS::StackName} --resource ec2Instance --region ${AWS::Region} -c dcv_gpu_install
+              $CFN_INIT -v --stack ${AWS::StackName} --resource ec2Instance --region ${AWS::Region} -c $SESSION
+              systemctl daemon-reload
+              systemctl enable dcv-gpu-install
+              ;;
+            *NVIDIA*) # install GPU driver after reboot
+              systemctl disable dcv-post-reboot
+
+              apt-get install -q -y unzip gcc make
+              apt-get install -q -y libglvnd-dev pkg-config
+
+              # Disable Nouveau: https://docs.nvidia.com/ai-enterprise/deployment-guide-vmware/0.1.0/nouveau.html#ubuntu
+              if (! cat /etc/modprobe.d/blacklist.conf | grep -q nouveau); then
+                echo "blacklist vga16fb" >> /etc/modprobe.d/blacklist.conf
+                echo "blacklist nouveau" >> /etc/modprobe.d/blacklist.conf
+                echo "blacklist rivafb" >> /etc/modprobe.d/blacklist.conf
+                echo "blacklist nvidiafb" >> /etc/modprobe.d/blacklist.conf
+                echo "blacklist rivatv" >> /etc/modprobe.d/blacklist.conf
+              fi
+              LINE_NUMBER=`grep -n ^GRUB_CMDLINE_LINUX= /etc/default/grub | cut -d ":" -f 1`
+              sed -i "$LINE_NUMBER s/.$/ rdblacklist=nouveau\"/" /etc/default/grub    
+              update-grub
+
+              $CFN_INIT -v --stack ${AWS::StackName} --resource ec2Instance --region ${AWS::Region} -c dcv_gpu_install
+              $CFN_INIT -v --stack ${AWS::StackName} --resource ec2Instance --region ${AWS::Region} -c $SESSION
+              systemctl daemon-reload
+              systemctl enable dcv-gpu-install
+              ;;
+            *AMD*) # https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/native-install/ubuntu.html
+              systemctl disable dcv-post-reboot
+              rm -f /etc/X11/xorg.conf
+
+              $CFN_INIT -v --stack ${AWS::StackName} --resource ec2Instance --region ${AWS::Region} -c dcv_gpu_install
+              $CFN_INIT -v --stack ${AWS::StackName} --resource ec2Instance --region ${AWS::Region} -c $SESSION
+              systemctl daemon-reload
+              systemctl enable dcv-gpu-install
+
+              mkdir --parents --mode=0755 /etc/apt/keyrings
+              wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | gpg --dearmor | tee /etc/apt/keyrings/rocm.gpg > /dev/null
+
+              # update repo file with correct values
+              if (cat /etc/os-release | grep -q 22.04); then
+                DISTRO=jammy
+              else
+                DISTRO=focal
+              fi
+              sed -i "s/DISTRO/$DISTRO/g" /etc/apt/sources.list.d/amdgpu.list
+              sed -i "s/DISTRO/$DISTRO/g" /etc/apt/sources.list.d/rocm.list
+
+              apt-get update -q
+              apt-get install -q -y amdgpu-dkms
+              ;;
+          esac
+
+          # CloudWatch agent: https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/install-CloudWatch-Agent-commandline-fleet.html#download-CloudWatch-Agent-on-EC2-Instance-commandline-fleet
+          if (arch | grep -q x86); then
+            curl -s -L -O https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+          else
+            curl -s -L -O https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/arm64/latest/amazon-cloudwatch-agent.deb
+          fi
+          apt-get install -q -y ./amazon-cloudwatch-agent.deb
+
+          # MountPoint-S3: https://github.com/awslabs/mountpoint-s3
+          if (uname -a | grep -q x86); then
+            curl -s -L -O https://s3.amazonaws.com/mountpoint-s3-release/latest/x86_64/mount-s3.deb
+          else
+            curl -s -L -O https://s3.amazonaws.com/mountpoint-s3-release/latest/arm64/mount-s3.deb
+          fi
+          apt-get install -q -y ./mount-s3.deb
+
+          # enable back IPv6
+          sysctl -w net.ipv6.conf.all.disable_ipv6=0
+          sysctl -w net.ipv6.conf.default.disable_ipv6=0
+
+          sleep 1 && reboot
+      Tags:
+        - Key: Name
+          Value: !Ref ec2Name
+        - Key: StackName
+          Value: !Sub ${AWS::StackName}
+        - Key: StackId
+          Value: !Sub ${AWS::StackId}
+        - Key: GitHub
+          Value: https://github.com/aws-samples/amazon-ec2-nice-dcv-samples
+
+  elasticIP:
+    Condition: useElasticIP
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      NetworkBorderGroup: !Ref AWS::Region
+      InstanceId: !Ref ec2Instance
+      Tags:
+        - Key: StackName
+          Value: !Sub ${AWS::StackName}
+        - Key: StackId
+          Value: !Sub ${AWS::StackId}
+        - Key: Name
+          Value: !Sub "[${AWS::StackName}] - ${ec2Name}"
+        - Key: GitHub
+          Value: https://github.com/aws-samples/amazon-ec2-nice-dcv-samples
+
+Outputs:
+  EC2console:
+    Description: EC2 console
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/ec2/home?region=${AWS::Region}#Instances:search=${ec2Instance}"
+
+  EC2instanceConnect:
+    Condition: createSgEIC
+    Description: EC2 Instance Connect
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/ec2-instance-connect/ssh?connType=standard&instanceId=${ec2Instance}&osUser=ubuntu&sshPort=22#/"
+
+  SSMsessionManager:
+    Description: SSM Session Manager ("sudo passwd ubuntu" to change password)
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/systems-manager/session-manager/${ec2Instance}"
+
+  DCVwebConsole:
+    Description: NICE DCV web browser client (login as ubuntu)
+    Value: !Sub
+      - "https://${IpAddress}:${listenPort}"
+      - IpAddress:
+          !If [
+            displayPublicIP,
+            !GetAtt ec2Instance.PublicIp,
+            !GetAtt ec2Instance.PrivateIp,
+          ]
+
+  SecurityGroup:
+    Description: Security Group
+    Value: !Ref securityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-SecurityGroup
+
+  InstanceID:
+    Description: Instance ID
+    Value: !Ref ec2Instance
+    Export:
+      Name: !Sub ${AWS::StackName}-InstanceID
+
+  IAMRole:
+    Description: IAM Role
+    Value: !Ref instanceIamRole
+    Export:
+      Name: !Sub ${AWS::StackName}-IAMRole

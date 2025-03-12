@@ -1,0 +1,106 @@
+name: Build DCV Server AMI
+
+# export BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+# gh workflow run dcv-server-dev.yaml --ref $BRANCH_NAME -f game_version="1_3_9"
+
+on:
+    workflow_dispatch:
+        inputs:
+            game_version:
+                type: string
+                required: true
+                default: "latest"
+            account_id:
+                type: string
+                required: true
+                default: "585415957264"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Git to use the GITHUB_TOKEN
+        run: |
+          git config --global url."https://oauth2:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Configure AWS credentials using OIDC
+        id: configure-aws-creds
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_MANAGEMENT_ACCOUNT_ID }}:role/intraverse-ops-github-actions
+        #   role-to-assume: arn:aws:iam::${{ inputs.account_id }}:role/intraverse-dev-github-actions-member
+          aws-region: us-east-1
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: 1.10.0
+
+      - name: Assume Member Account Role
+        id: assume-member-role
+        run: |
+          MEMBER_ROLE=$(aws sts assume-role --role-arn arn:aws:iam::${{ inputs.account_id }}:role/intraverse-dev-github-actions-member --role-session-name GitHubActionsSession)
+          echo "AWS_ACCESS_KEY_ID=$(echo $MEMBER_ROLE | jq -r '.Credentials.AccessKeyId')" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo $MEMBER_ROLE | jq -r '.Credentials.SecretAccessKey')" >> $GITHUB_ENV
+          echo "AWS_SESSION_TOKEN=$(echo $MEMBER_ROLE | jq -r '.Credentials.SessionToken')" >> $GITHUB_ENV
+
+      - name: Check S3 for the Client Build
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ env.AWS_SESSION_TOKEN }}
+        run: |
+          echo "Copying build file to target location..."
+          aws s3 cp s3://addressables-dev/StandaloneLinux64/Player/ClientBuild_v${{ inputs.game_version }}.zip s3://intraverse-dev-builder-objects-18f71b13/unity-builds/unity-build-${{ inputs.game_version }}.zip
+        #   BUILD_EXISTS=$(aws s3 ls s3://addressables-dev/StandaloneLinux64/Player/ClientBuild_v${{ inputs.game_version }}.zip)
+        #   if [ -z "$BUILD_EXISTS" ]; then
+        #     echo "Build does not exist in S3"
+        #     exit 1
+        #   fi
+        #   TARGET_EXISTS=$(aws s3 ls s3://intraverse-dev-builder-objects-18f71b13/unity-builds/unity-build-${{ inputs.game_version }}.zip)
+        #   if [ -z "$TARGET_EXISTS" ]; then
+        #     echo "Copying build file to target location..."
+        #     aws s3 cp s3://addressables-dev/StandaloneLinux64/Player/ClientBuild_v${{ inputs.game_version }}.zip s3://intraverse-dev-builder-objects-18f71b13/unity-builds/unity-build-${{ inputs.game_version }}.zip
+        #   else
+        #     echo "Target file already exists, skipping copy"
+        #   fi
+
+      - name: Set up Packer
+        working-directory: packer/dcv-server-host
+        run: packer init dcv-server-ami.pkr.hcl
+
+      - name: Build AMI
+        working-directory: packer/dcv-server-host
+        run: |
+          DCV_VERSION=$(git rev-parse --short HEAD)
+          packer build \
+            -var "dcv_version=${DCV_VERSION}" \
+            -var "game_version=${{ inputs.game_version }}" \
+            -var "game_build_bucket=intraverse-dev-builder-objects-18f71b13" \
+            -var "game_build_folder=unity-builds" \
+            -var "dcv_docker_base_ami=ami-0c4e8348f50c7d4ed" \
+            -var "instance_type=g4dn.xlarge" \
+            -var "region=us-east-1" \
+            -var "iam_instance_profile=intraverse-dev-dcv-builder-18f71b13" \
+            dcv-server-ami.pkr.hcl
+      
+# packer build \
+#             -var "dcv_version=1.3.14" \
+#             -var "game_version=1.3.9" \
+#             -var "game_build_bucket=intraverse-dev-builder-objects-18f71b13" \
+#             -var "game_build_folder=unity-builds" \
+#             -var "ami=ami-021a3c5e0cc9cb57c" \
+#             -var "instance_type=g4dn.xlarge" \
+#             -var "region=us-east-1" \
+#             -var "iam_instance_profile=intraverse-dev-dcv-builder-18f71b13" \
+#             dcv-server-ami.pkr.hcl
