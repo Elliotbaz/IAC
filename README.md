@@ -1,4 +1,4 @@
-# TerraZero Intraverse Infrastructure
+# Intraverse Infrastructure
 
 ## Ultimate Vision for IaC in Broad Terms
 - I want to be able to express and manage most all of the resources that make sense through code commits, whether it's deploying stacks of resources through CI/CD or by importing out-of-band changes into the codebase.
